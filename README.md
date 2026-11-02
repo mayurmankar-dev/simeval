@@ -25,7 +25,7 @@ A rollout succeeds if, after 0.5 s of settling, the cube's centre is within 3 cm
 - **Push distance matters.** Success holds at about 80% for pushes up to ~23 cm, then drops to 57% for the longest pushes (28–47 cm).
 - **Cube mass (0.05–0.5 kg) and friction (0.3–1.2) show no clear effect at this sample size.** The per-bin confidence intervals overlap heavily.
 - **The largest failure mode is `timeout_near`** (13.5%): the cube is close but the controller runs out of time. That points to speed rather than strategy.
-- **Fell-off-table failures:** <!-- TODO: your own explanation from the failure map and videos -->
+- **Fell-off-table failures (7.5%) are a controller bug, not physics.** All 15 cubes fell off the edge nearest the robot, during the re-approach after a re-alignment. When the cube is close to the robot, the stand-off point behind it lies near the arm's base, where the inverse kinematics can't lift the gripper while keeping it vertical. The gripper slides at table height toward the robot, and because the stand-off point is recomputed from the moving cube, it keeps pushing the cube until it drops off the edge (see `results/report/fell_off_table_scene35.mp4`). Planned fix: rise to hover height before moving sideways, and freeze the stand-off point during the approach.
 
 ![Success by distance](results/report/success_by_distance.png)
 ![Failure map](results/report/failure_map.png)
@@ -67,4 +67,4 @@ Runs in under a minute on a laptop (videos take a few minutes). Watch a single r
 - Contact parameters are MuJoCo defaults, not calibrated against real hardware.
 
 ## Built with
-MuJoCo 3.17, [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) (Franka Panda model), NumPy, Matplotlib. <!-- TODO: say honestly how you built it, e.g. "developed step by step with an AI assistant" -->
+MuJoCo 3.17, [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) (Franka Panda model), NumPy, Matplotlib.
