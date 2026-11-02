@@ -3,3 +3,9 @@ __pycache__/
 mujoco_menagerie/
 MUJOCO_LOG.TXT
 .DS_Store
+first_scene.xml
+sim_basics.py
+measure.py
+robot_intro.py
+scenes_seed42.json
+scenes_seed7.json
