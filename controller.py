@@ -1,7 +1,10 @@
-"""Scripted push controller: inverse kinematics + a phase-based plan (approach, descend, push, re-align)."""
+"""Scripted push controller (v2): inverse kinematics + a phase-based plan (approach, descend, push, re-align)."""
 import mujoco
 import numpy as np
 from env import TABLE_TOP, HALF, TCP_OFFSET
+
+PUSH_MAX_STEP = 0.02         # rad per control step while pushing: slow and careful
+FREE_SPACE_MAX_STEP = 0.05   # rad per control step when not touching the cube (set to 0.02 to reproduce fix iteration 1)
 
 
 def ik_step(env, goal, damping=0.05, max_step=0.02):
@@ -35,7 +38,7 @@ def run_push(env, max_time=15.0, success_dist=0.02, on_step=None):
     hover_z = TABLE_TOP + 0.10
     push_z = TABLE_TOP + 0.005        # fingertips just above the table; palm clears the cube top
     standoff = HALF + 0.015           # pusher distance from cube centre while pushing
-    trace, n_realign, lift_xy = [], 0, None
+    trace, n_realign, lift_xy, approach_xy = [], 0, None, None
     steps_per_ctrl = 5                # control at 100 Hz, physics at 500 Hz
     for step in range(int(max_time / m.opt.timestep)):
         if step % steps_per_ctrl == 0:
@@ -46,13 +49,18 @@ def run_push(env, max_time=15.0, success_dist=0.02, on_step=None):
             behind = cube[:2] - u * 0.08                     # stand-off point behind the cube
 
             if phase == "approach":
-                goal = np.r_[behind, hover_z]
-                if np.linalg.norm(tcp - goal) < 0.01:
+                if approach_xy is None:
+                    approach_xy = behind.copy()               # freeze: don't chase a moving cube
+                if tcp[2] < hover_z - 0.02:
+                    goal = np.r_[tcp[:2], hover_z]            # rise straight up first
+                else:
+                    goal = np.r_[approach_xy, hover_z]        # then move sideways at hover height
+                if np.linalg.norm(tcp - np.r_[approach_xy, hover_z]) < 0.01:
                     phase = "descend"
             elif phase == "descend":
-                goal = np.r_[behind, push_z]
+                goal = np.r_[approach_xy, push_z]
                 if np.linalg.norm(tcp - goal) < 0.01:
-                    phase = "push"
+                    phase, approach_xy = "push", None
             elif phase == "push":
                 rel = tcp[:2] - cube[:2]
                 lateral = rel - (rel @ u) * u                # sideways misalignment
@@ -61,15 +69,15 @@ def run_push(env, max_time=15.0, success_dist=0.02, on_step=None):
                 elif np.linalg.norm(lateral) > 0.025 or rel @ u > -HALF:
                     # cube drifted off-line (or we overshot): lift and go around again
                     phase, n_realign = "lift", n_realign + 1
-                    lift_xy = tcp[:2] - u * 0.03
+                    lift_xy = tcp[:2].copy()                  # lift straight up (no sideways drag)
                 goal = np.r_[cube[:2] - u * standoff + u * 0.03 - 0.5 * lateral, push_z]
             if phase == "lift":
-                goal = np.r_[lift_xy, hover_z]               # back off and rise, then re-approach
+                goal = np.r_[lift_xy, hover_z]               # rise, then re-approach
                 if tcp[2] > hover_z - 0.01:
                     phase = "approach"
             if phase == "done":
                 goal = np.r_[tcp[:2], hover_z]               # lift off so we don't disturb the cube
-            ik_step(env, goal)
+            ik_step(env, goal, max_step=PUSH_MAX_STEP if phase == "push" else FREE_SPACE_MAX_STEP)
             trace.append((d.time, phase, *cube[:3]))
         mujoco.mj_step(m, d)
         if on_step:

@@ -45,7 +45,7 @@ def chart_success_by_distance(results, out):
     ax.set_ylabel("Success rate (%)")
     ax.set_ylim(0, 100)
     ax.yaxis.grid(True, color=GRID, linewidth=0.8, zorder=0)
-    ax.set_title("Success drops on pushes longer than ~23 cm (error bars: 95% CI)", loc="left", fontsize=11)
+    ax.set_title("Success rate by push distance (error bars: 95% CI)", loc="left", fontsize=11)
     fig.tight_layout(); fig.savefig(out, dpi=160); plt.close(fig)
 
 

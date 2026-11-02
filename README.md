@@ -4,13 +4,21 @@ A small evaluation harness for a robot manipulation task. It generates randomize
 
 **Task:** a Franka Emika Panda arm pushes a 4 cm cube across a table onto a target marker.
 
-![Outcomes](results/report/outcomes.png)
+![Outcomes, v1 controller](results/report_v1/outcomes.png)
 
-## Results (200 scenes, seed 0)
+## Results
 
-**Success rate: 147/200 = 73.5%** (95% Wilson CI: 67.0%–79.1%)
+The eval found a controller bug; fixing it raised success from **73.5% to 99.5%** on the original 200 scenes, and from **75.5% to 99.0% on 200 fresh scenes (seed 2) that were never used while designing the fix.**
 
-A rollout succeeds if, after 0.5 s of settling, the cube's centre is within 3 cm of the target, the cube is still on the table, and it is tilted less than 15°.
+| | Seed 0 (used to find the bug) | Seed 2 (held out) |
+|---|---|---|
+| v1 controller | 147/200 = 73.5% (95% CI 67.0–79.1%) | 151/200 = 75.5% (95% CI 69.1–80.9%) |
+| **v2 controller** | **199/200 = 99.5%** (95% CI 97.2–99.9%) | **198/200 = 99.0%** (95% CI 96.4–99.7%) |
+| Paired change | 52 scenes fixed, 0 broken (McNemar p = 4e-16) | 47 fixed, 0 broken (McNemar p = 1e-14) |
+
+A rollout succeeds if, after 0.5 s of settling, the cube's centre is within 3 cm of the target, the cube is still on the table, and it is tilted less than 15°. The grader, the 15 s time budget and the scenes were identical before and after; only the controller changed.
+
+### What the v1 eval showed (seed 0)
 
 | Outcome | Count | Share |
 |---|---|---|
@@ -21,14 +29,19 @@ A rollout succeeds if, after 0.5 s of settling, the cube's centre is within 3 cm
 | tipped_over | 5 | 2.5% |
 | stopped_short | 1 | 0.5% |
 
-**Findings**
-- **Push distance matters.** Success holds at about 80% for pushes up to ~23 cm, then drops to 57% for the longest pushes (28–47 cm).
-- **Cube mass (0.05–0.5 kg) and friction (0.3–1.2) show no clear effect at this sample size.** The per-bin confidence intervals overlap heavily.
-- **The largest failure mode is `timeout_near`** (13.5%): the cube is close but the controller runs out of time. That points to speed rather than strategy.
-- **Fell-off-table failures (7.5%) are a controller bug, not physics.** All 15 cubes fell off the edge nearest the robot, during the re-approach after a re-alignment. When the cube is close to the robot, the stand-off point behind it lies near the arm's base, where the inverse kinematics can't lift the gripper while keeping it vertical. The gripper slides at table height toward the robot, and because the stand-off point is recomputed from the moving cube, it keeps pushing the cube until it drops off the edge (see `results/report/fell_off_table_scene35.mp4`). Planned fix: rise to hover height before moving sideways, and freeze the stand-off point during the approach.
+- **All 15 fell-off-table failures had the same cause, a controller bug.** Every cube fell off the edge nearest the robot, during the re-approach after a re-alignment. When the cube is close to the robot, the stand-off point behind it lies near the arm's base, where the inverse kinematics couldn't lift the gripper while keeping it vertical. The gripper slid at table height toward the robot, and because the stand-off point was recomputed from the moving cube, it kept pushing the cube until it dropped off.
+- **Push distance mattered:** about 80% success up to ~23 cm, falling to 57% for the longest pushes.
+- **Cube mass (0.05–0.5 kg) and friction (0.3–1.2) showed no clear effect;** the per-bin confidence intervals overlap heavily.
+- **The largest failure mode was `timeout_near`:** close to the target, but out of time.
 
-![Success by distance](results/report/success_by_distance.png)
-![Failure map](results/report/failure_map.png)
+### The fix, in two iterations
+1. **Lift first, freeze the goal:** rise straight up before moving sideways, and fix the stand-off point when the approach starts. On seed 0 this looked like a clear win (73.5% → 82.5%). **On held-out seed 1 it wasn't significant** (70.5% → 72.5%, p = 0.6): fell-off failures went to zero, but most of those scenes became timeouts, because the safer approach was slower.
+2. **Move faster in free space, stay slow while pushing:** the arm's step limit was raised for approach and lift only. This removed the timeouts: 99.5% on seed 0, 99.0% on seed 1, and 99.0% on the untouched seed 2 with no scene getting worse.
+
+The lesson: the first fix only looked good on the scenes used to design it. The held-out set caught the trade-off.
+
+![Failure map (v1)](results/report_v1/failure_map.png)
+![Success by distance (v1)](results/report_v1/success_by_distance.png)
 
 ## How it works
 
@@ -39,6 +52,7 @@ A rollout succeeds if, after 0.5 s of settling, the cube's centre is within 3 cm
 | Controller | `controller.py` | Scripted pusher: damped least-squares inverse kinematics plus a closed-loop plan (approach → descend → push → re-align if the cube drifts) |
 | Grader | `grader.py` | Independent of the controller: re-measures after settling, checks table/tilt/time, assigns one outcome per rollout, records metrics |
 | Benchmark | `benchmark.py` | Runs all scenes in parallel, saves raw results (JSON/CSV), reports Wilson confidence intervals and per-property breakdowns |
+| Comparison | `compare.py` | Paired before/after comparison on the same scenes, with an exact McNemar test |
 | Report | `report.py` | Charts, example videos per outcome, markdown summary |
 
 **Design choices**
@@ -50,6 +64,7 @@ A rollout succeeds if, after 0.5 s of settling, the cube's centre is within 3 cm
 - The Panda's fingers (~4.4 cm) are shorter than a 5 cm cube, so the palm jammed the cube. Switched to a 4 cm cube.
 - Changing the cube's mass at runtime made contacts unstable until derived model constants were recomputed with `mj_setConst`.
 - An open-loop push drifted off-line; the controller now re-aligns when the cube moves sideways or it overshoots.
+- The re-approach bulldozed cubes off the table near the robot (found by the eval itself; see Results).
 
 ## Reproduce
 
@@ -63,7 +78,8 @@ Runs in under a minute on a laptop (videos take a few minutes). Watch a single r
 ## Limitations
 - Simulation only; no sim-to-real validation.
 - One task and one scripted controller; the eval harness is the focus, not the policy.
-- 200 scenes give roughly ±6 percentage points of uncertainty on the headline rate.
+- At 99% success, 200 scenes can't separate small differences; comparing future controllers needs harder scenes or more of them.
+- The remaining failures are long pushes that run out of time.
 - Contact parameters are MuJoCo defaults, not calibrated against real hardware.
 
 ## Built with
